@@ -1,5 +1,16 @@
 # tests/test_requirements_import.py
 
+# ------------------------------------------------------------------------------
+# Script: 1.test_requirements_import.py
+# Purpose: Test that required Python packages (openai, dotenv) are installed and importable.
+#
+# How to Run:
+#   $ python tests/1.test_requirements_import.py
+#
+# Expected Output:
+#   SUCCESS: openai and dotenv imported successfully.
+# ------------------------------------------------------------------------------
+
 def test_imports():
     try:
         import openai
