@@ -1,0 +1,1 @@
+Girma Debella is an AI Engineer with a strong background in software engineering, LLM tools, and DevOps practices. He has worked on Kubernetes platforms, GitOps automation, and AI-driven resume assistants using OpenAI, Python, and Gradio.

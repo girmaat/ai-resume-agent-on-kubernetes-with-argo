@@ -6,7 +6,7 @@
 #   $ python tests/2.test_env_loading.py
 #
 # Expected Output:
-#   ✅ SUCCESS: OPENAI_API_KEY loaded from .env
+#   UCCESS: OPENAI_API_KEY loaded from .env
 #
 # ------------------------------------------------------------------------------
 
