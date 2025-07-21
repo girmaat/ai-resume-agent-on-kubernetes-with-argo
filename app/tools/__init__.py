@@ -3,5 +3,5 @@
 # ------------------------------------------------------------------------
 
 from app.tools.notify_user import record_user_details
-from app.tools.log_unknown import record_unknown_question
+from app.tools.log_unknown import record_unknown_query
 
