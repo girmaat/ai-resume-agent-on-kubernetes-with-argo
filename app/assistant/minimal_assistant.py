@@ -33,19 +33,65 @@ class ResumeAssistant:
         reader = PdfReader(pdf_path)
         return "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
 
+
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "record_user_details",
+                "description": "Collect contact info when user expresses interest.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "email": {
+                            "type": "string",
+                            "description": "User's email address"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Optional full name"
+                        },
+                        "notes": {
+                            "type": "string",
+                            "description": "Extra info, e.g., intent, job interest"
+                        }
+                    },
+                    "required": ["email"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "record_unknown_query",
+                "description": "Log questions that the assistant cannot answer.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The user's original question"
+                        }
+                    },
+                    "required": ["question"]
+                }
+            }
+        }
+    ]
+
     def system_prompt(self):
         return f"""
-You are acting as {self.name}, a professional software engineer specializing in AI.
+You are acting as {self.name}, a professional software engineer.
 
-Your role is to answer questions about {self.name}'s background, skills, resume, and projects using the context below.
+Your job is to answer questions about {self.name}'s experience, skills, background, and projects using the context below.
 
-If a user expresses interest, such as asking for a follow-up, collaboration, or showing intent to contact, then:
-→ Use the 'record_user_details' tool to collect their email, name (if available), and any notes.
+If a user expresses interest (e.g., wants to follow up, collaborate, hire, or get in touch), then:
+- Use the tool `record_user_details` and collect their email, name, and notes (if given).
 
-If a user asks a question that cannot be confidently answered using the resume or summary, then:
-→ Use the 'record_unknown_question' tool to log the question.
+If a user asks something that cannot be confidently answered using the provided resume or summary:
+- Use the tool `record_unknown_query` to log what was asked.
 
-Do not guess. If unsure, escalate using the appropriate tool.
+Do not guess or fabricate answers — if unsure, escalate using the appropriate tool.
 
 ---
 
@@ -65,7 +111,8 @@ Do not guess. If unsure, escalate using the appropriate tool.
         ]
         response = self.openai.chat.completions.create(
             model="gpt-4",
-            messages=messages
+            messages=messages,                    
+            tools=self.tools
         )
         return response.choices[0].message.content
 
