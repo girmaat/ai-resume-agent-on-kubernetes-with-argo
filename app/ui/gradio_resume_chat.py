@@ -1,14 +1,58 @@
 import gradio as gr
 from app.assistant.minimal_assistant import ResumeAssistant
+import time
 
 assistant = ResumeAssistant()
 
+def clean_message(message):
+    """Remove any project path prefixes from messages"""
+    if message and ("Personal Folder:" in message or "|" in message):
+        return message.split("|")[-1].strip()
+    return message
+
+def type_message(message, delay=0.02):
+    message = clean_message(message)
+    typed_message = ""
+    for char in message:
+        typed_message += char
+        yield typed_message
+        time.sleep(delay)
+
 def respond(message, history):
     history = history or []
-    history.append((f"🧑 {message}", "<span class='spinner'></span>"))
-    response = assistant.chat(message)
-    history[-1] = (f"🧑 {message}", f"🤖 {response}")
-    return history, history
+    clean_msg = clean_message(message)
+    
+    # Add user message without avatar prefix
+    history.append((clean_msg, ""))
+    yield history, history
+
+    
+    # Add thinking indicator
+    thinking_message = f"<span class='spinner'></span> Thinking..."
+    history[-1] = (clean_msg, thinking_message)
+    yield history, history
+    
+    # Get and clean AI response (fixing pronoun consistency)
+    response = assistant.chat(clean_msg)
+    clean_response = clean_message(response)
+    
+    # Standardize pronouns in the response
+    clean_response = clean_response.replace(" he ", " I ").replace("He ", "I ").replace(" his ", " my ").replace("His ", "My ")
+    
+    # Add response with typing effect
+    full_response = ""
+    for char in clean_response:
+        full_response += char
+        history[-1] = (clean_msg, full_response)
+        yield history, history
+        time.sleep(0.02)
+
+def load_initial_message():
+    initial_text = "Ask me anything about my work, projects, or experience — I will respond in real time."
+    initial_text = clean_message(initial_text)
+    for partial in type_message(initial_text):
+        yield [(None, partial)]
+    return [(None, initial_text)]
 
 custom_css = """
 :root {    
@@ -184,6 +228,8 @@ body, .gradio-container {
     padding: 20px;
     display: flex;
     flex-direction: column;
+    background: var(--background);
+    padding: 10px !important;  
 }
 
 .chat-message {
@@ -194,17 +240,20 @@ body, .gradio-container {
     line-height: 1.5;
 }
 
-.user-message {
-    background: var(--primary);
-    color: white;
+.chat-container .user {
+    background: var(--surface);
     margin-left: auto;
-    border-bottom-right-radius: 4px;
+    border: none;
 }
 
-.bot-message {
-    background: rgba(255, 255, 255, 0.1);
+.chat-container .bot {
+    background: transparent;
     margin-right: auto;
-    border-bottom-left-radius: 4px;
+    border: none;
+}
+
+.bot *, .user *{
+    color: rgba(255, 255, 255, 0.7) !important;
 }
 
 /* Input Area */
@@ -228,22 +277,7 @@ body, .gradio-container {
     box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.3);
 }
 
-/* Spinner Animation */
-.spinner {
-    display: inline-block;
-    width: 16px;
-    height: 16px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: white;
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-    margin-left: 8px;
-    vertical-align: middle;
-}
 
-@keyframes spin {
-    to { transform: rotate(360deg); }
-}
 
 /* Mobile Responsiveness */
 @media (max-width: 768px) {
@@ -262,6 +296,40 @@ body, .gradio-container {
         height: 50vh;
     }
 }
+
+/* Remove circular avatars */
+.gr-chatbot .avatar {
+    display: none !important;
+}
+
+/* Adjust message alignment */
+.gr-chatbot .user-message {
+    margin-left: auto;
+    border-bottom-right-radius: 4px;
+}
+
+.gr-chatbot .assistant-message {
+    margin-right: auto;
+    border-bottom-left-radius: 4px;
+}
+
+/* Spinner Animation */
+.spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
 """
 
 with gr.Blocks(css=custom_css) as demo:
@@ -296,7 +364,7 @@ with gr.Blocks(css=custom_css) as demo:
                         gr.Markdown("""<h4 class="divider-title">Start Chatting with My Resume</h4>""")
                         gr.Markdown("""<p class="divider-text">Start typing to ask me anything about my work, projects, or experience — the assistant will respond in real time.</p>""")
 
-        # Right Chat Panel
+        # Right Chat Panel 
         with gr.Column(scale=3, elem_classes="right-panel"):
             chatbot = gr.Chatbot(
                 elem_classes="chat-container",
@@ -304,7 +372,7 @@ with gr.Blocks(css=custom_css) as demo:
                 show_label=False,
                 bubble_full_width=False,
                 sanitize_html=False,
-                avatar_images=("🧑", "🤖")
+                avatar_images=None  
             )
             
             with gr.Row(elem_classes="input-container"):
@@ -316,7 +384,23 @@ with gr.Blocks(css=custom_css) as demo:
                 )
             
             state = gr.State([])
-            msg.submit(respond, [msg, state], [chatbot, state]).then(lambda: "", None, msg)
+            
+            # Load initial message
+            demo.load(
+                load_initial_message,
+                inputs=None,
+                outputs=[chatbot]
+            ).then(
+                lambda: [(None, "Ask me anything about my work, projects, or experience — I will respond in real time.")],
+                outputs=[state]
+            )
+            
+            msg.submit(
+                respond,
+                inputs=[msg, state],
+                outputs=[chatbot, state]
+            ).then(lambda: "", None, msg)
+
 
 if __name__ == "__main__":
     demo.launch()
