@@ -8,113 +8,98 @@
 # Expected Output:
 #   Assistant responds to your input using static prompt context
 # ------------------------------------------------------------------------------
-
 import os
+from importlib import import_module  # Add this import
 from dotenv import load_dotenv
 from openai import OpenAI
 from pypdf import PdfReader
+from openai.types.chat import ChatCompletionMessageToolCall
+
+from app.assistant.config.non_ai import config
+from app.tools import record_user_details, record_unknown_query
 
 load_dotenv()
 
 class ResumeAssistant:
     def __init__(self):
-        self.name = "Girma Debella"
+        # Dynamic imports
+        prompts = import_module(config.prompts_module)
+        tools = import_module(config.tools_module)
+        
+        self.name = config.PERSONAL["name"]
         self.openai = OpenAI()
+        self.tools = tools.TOOLS
         self.summary = self._load_summary()
         self.resume = self._load_resume()
+        self.system_prompt_func = prompts.get_system_prompt
 
     def _load_summary(self):
-        path = "me/summary.txt"
-        with open(path, encoding="utf-8") as f:
+        with open(config.summary_path, encoding="utf-8") as f:
             return f.read()
 
     def _load_resume(self):
-        pdf_path = "me/gi.pdf"
-        reader = PdfReader(pdf_path)
-        return "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
+        reader = PdfReader(config.resume_path)
+        return "\n".join(p.extract_text() for p in reader.pages if p.extract_text())
 
-
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "record_user_details",
-                "description": "Collect contact info when user expresses interest.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "email": {
-                            "type": "string",
-                            "description": "User's email address"
-                        },
-                        "name": {
-                            "type": "string",
-                            "description": "Optional full name"
-                        },
-                        "notes": {
-                            "type": "string",
-                            "description": "Extra info, e.g., intent, job interest"
-                        }
-                    },
-                    "required": ["email"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "record_unknown_query",
-                "description": "Log questions that the assistant cannot answer.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "question": {
-                            "type": "string",
-                            "description": "The user's original question"
-                        }
-                    },
-                    "required": ["question"]
-                }
-            }
-        }
-    ]
+    def get_resume_path(self):
+        """Return absolute path to resume PDF"""
+        abs_path = os.path.abspath(config.PERSONAL["resume_pdf"])
+        if not os.path.exists(abs_path):
+            raise FileNotFoundError(f"Resume not found at {abs_path}")
+        return abs_path
 
     def system_prompt(self):
-        return f"""
-You are acting as {self.name}, a professional software engineer.
-
-Your job is to answer questions about {self.name}'s experience, skills, background, and projects using the context below.
-
-If a user expresses interest (e.g., wants to follow up, collaborate, hire, or get in touch), then:
-- Use the tool `record_user_details` and collect their email, name, and notes (if given).
-
-If a user asks something that cannot be confidently answered using the provided resume or summary:
-- Use the tool `record_unknown_query` to log what was asked.
-
-Do not guess or fabricate answers — if unsure, escalate using the appropriate tool.
-
----
-
-## Summary:
-{self.summary}
-
----
-
-## Resume:
-{self.resume}
-"""
+        return self.system_prompt_func(self.summary, self.resume)
 
     def chat(self, user_input):
         messages = [
             {"role": "system", "content": self.system_prompt()},
             {"role": "user", "content": user_input}
         ]
+
         response = self.openai.chat.completions.create(
             model="gpt-4",
-            messages=messages,                    
+            messages=messages,
             tools=self.tools
         )
-        return response.choices[0].message.content
+
+        choice = response.choices[0]
+        if choice.finish_reason == "tool_calls":
+            tool_calls = choice.message.tool_calls or []
+
+            # Add tool call message
+            messages.append({
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [tc.model_dump() for tc in tool_calls]
+            })
+
+            for call in tool_calls:
+                fn_name = call.function.name
+                args = eval(call.function.arguments)  # JSON string
+
+                if fn_name == "record_user_details":
+                    result = record_user_details(**args)
+                elif fn_name == "record_unknown_query":
+                    result = record_unknown_query(**args)
+                else:
+                    result = {"error": "unknown tool"}
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": str(result)
+                })
+
+            # Re-send messages with tool outputs
+            second_response = self.openai.chat.completions.create(
+                model="gpt-4",
+                messages=messages
+            )
+            return second_response.choices[0].message.content
+
+        else:
+            return choice.message.content
 
 if __name__ == "__main__":
     assistant = ResumeAssistant()

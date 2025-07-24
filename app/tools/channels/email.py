@@ -1,6 +1,7 @@
 import os
 import smtplib
 from email.message import EmailMessage
+from app.assistant.config.non_ai import config
 
 def send(message: str):
     try:
@@ -10,12 +11,12 @@ def send(message: str):
         server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 
         if not sender or not password or not recipient:
-            print("Email not configured — skipping.")
+            print(config.ERRORS["email_not_configured"])
             return
 
         msg = EmailMessage()
         msg.set_content(message)
-        msg["Subject"] = "AI Assistant Alert"
+        msg["Subject"] = config.NOTIFICATIONS["email_subject"]
         msg["From"] = sender
         msg["To"] = recipient
 
@@ -23,4 +24,4 @@ def send(message: str):
             smtp.login(sender, password)
             smtp.send_message(msg)
     except Exception as e:
-        print("Email failed:", e)
+        print(config.ERRORS["email_failed"].format(error=e))

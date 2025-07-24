@@ -1,58 +1,86 @@
 import gradio as gr
 from app.assistant.minimal_assistant import ResumeAssistant
+from app.assistant.config.non_ai import config
 import time
+import re
+import os
 
 assistant = ResumeAssistant()
 
+def get_ui_config():
+    """Helper to get current UI config"""
+    return config.UI
+
+initial_text = config.UI["chat"]["initial_message"]
 def clean_message(message):
     """Remove any project path prefixes from messages"""
     if message and ("Personal Folder:" in message or "|" in message):
         return message.split("|")[-1].strip()
     return message
 
-def type_message(message, delay=0.02):
+def type_message(message, delay=config.CHAT["typing_delay"]):
     message = clean_message(message)
     typed_message = ""
     for char in message:
         typed_message += char
         yield typed_message
-        time.sleep(delay)
+        time.sleep(config.CHAT["response_delay"])
+
+def clean_response(response):
+    # Only replace when the full name appears (not first name alone)
+    full_name = config.PERSONAL['name']
+    if full_name in response:
+        response = response.replace(f"{full_name}'s", f"{config.first_name}'s")
+        response = response.replace(full_name, config.first_name)
+    return re.sub(r'\s+', ' ', response).strip()
 
 def respond(message, history):
+    ui_config = get_ui_config()
     history = history or []
-    clean_msg = clean_message(message)
     
-    # Add user message without avatar prefix
-    history.append((clean_msg, ""))
-    yield history, history
-
-    
-    # Add thinking indicator
-    thinking_message = f"<span class='spinner'></span> Thinking..."
-    history[-1] = (clean_msg, thinking_message)
+    # 1. Display original user message exactly as typed
+    history.append((message, ""))  # No processing of user input
     yield history, history
     
-    # Get and clean AI response (fixing pronoun consistency)
-    response = assistant.chat(clean_msg)
+    # 2. Show thinking indicator
+    history[-1] = (message, ui_config["chat"]["thinking_message"])
+    yield history, history
+    
+    # 3. Get and clean AI response (only affects bot's replies)
+    response = assistant.chat(message)  # Pass original message unchanged
+    
     clean_response = clean_message(response)
+    clean_response = (
+        clean_response
+        .replace(f"{config.PERSONAL['name']}'s", f"{config.first_name}'s")
+        .replace(f"{config.PERSONAL['name']} ", f"{config.first_name} ")
+        .replace("  ", " ")
+        .strip()
+    )
     
-    # Standardize pronouns in the response
-    clean_response = clean_response.replace(" he ", " I ").replace("He ", "I ").replace(" his ", " my ").replace("His ", "My ")
-    
-    # Add response with typing effect
+    # 4. Type out response
     full_response = ""
     for char in clean_response:
         full_response += char
-        history[-1] = (clean_msg, full_response)
+        history[-1] = (message, full_response)  # Keep original user message
         yield history, history
-        time.sleep(0.02)
-
+        time.sleep(ui_config["chat"]["typing_delay"])
+           
 def load_initial_message():
-    initial_text = "Ask me anything about my work, projects, or experience — I will respond in real time."
+    ui_config = get_ui_config()
+    initial_text = ui_config["chat"]["initial_message"]
     initial_text = clean_message(initial_text)
     for partial in type_message(initial_text):
         yield [(None, partial)]
     return [(None, initial_text)]
+    
+def get_resume_path(self):
+    """Return the path to the resume PDF file"""
+    path = config.PERSONAL["resume_pdf"]
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Resume file not found at {path}")
+    return path
+
 
 custom_css = """
 :root {    
@@ -63,6 +91,9 @@ custom_css = """
     --text: #ffffff;
     --border: #334155;
     --divider: #334155;
+    --placeholder: #000000;
+    --bot-bg: rgba(0, 0, 0, 0.3);  
+    --user-bg: #1e293b;
 }
 
 /* Base Layout */
@@ -111,7 +142,6 @@ body, .gradio-container {
 .profile-image-container {
     display: flex !important;
     justify-content: center !important;
-    margin-bottom: 20px !important;
 }
 
 .profile-image {
@@ -247,13 +277,13 @@ body, .gradio-container {
 }
 
 .chat-container .bot {
-    background: transparent;
     margin-right: auto;
     border: none;
+    background: var(--bot-bg) !important;
 }
 
 .bot *, .user *{
-    color: rgba(255, 255, 255, 0.7) !important;
+    color: rgba(255, 255, 255, 1) !important;
 }
 
 /* Input Area */
@@ -267,7 +297,7 @@ body, .gradio-container {
     border-radius: 25px;
     border: 1px solid var(--border);
     background: var(--background);
-    color: white;
+    color: var(--text) !important;
     font-size: 1rem;
 }
 
@@ -277,7 +307,10 @@ body, .gradio-container {
     box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.3);
 }
 
-
+.chat-input::placeholder {
+    color: var(--placeholder) !important;
+    opacity: 1 !important; /* Ensure full visibility */
+}
 
 /* Mobile Responsiveness */
 @media (max-width: 768px) {
@@ -312,7 +345,17 @@ body, .gradio-container {
     margin-right: auto;
     border-bottom-left-radius: 4px;
 }
+.gr-chatbot {
+    background: var(--background) !important;
+}
 
+
+.gr-chatbot .assistant-message {
+    color: #ffffff !important;
+    margin-right: auto !important;
+    border-bottom-left-radius: 4px !important;
+    border: 1px solid #2d5a2d !important;
+}
 /* Spinner Animation */
 .spinner {
     display: inline-block;
@@ -333,9 +376,10 @@ body, .gradio-container {
 """
 
 with gr.Blocks(css=custom_css) as demo:
+    ui_config = get_ui_config()    
     with gr.Row():
         # Left Profile Panel
-        with gr.Column(scale=2, min_width=220, elem_classes="left-panel"):
+        with gr.Column(scale=1, min_width=220, elem_classes="left-panel"):
             # Main vertical container
             with gr.Column(elem_classes="profile-column"):
                 # Profile image (centered)
@@ -346,26 +390,28 @@ with gr.Blocks(css=custom_css) as demo:
                             show_download_button=False)
                 
                 # Profile text content
+ 
                 with gr.Column(elem_classes="profile-content"):
-                    gr.Markdown("""
-                    <h1 class="profile-name">Girma Debella</h1>
-                    <h2 class="profile-title">AI Engineer</h2>
-                    <p class="profile-description">I specialize in building intelligent systems using LLM.</p>
+                    gr.Markdown(f"""
+                    <h1 class="profile-name">{config.PERSONAL['name']}</h1>
+                    <h2 class="profile-title">{config.PERSONAL['title']}</h2>
+                    <p class="profile-description">{config.PERSONAL['description']}</p>
                     """)
                     
-                    # Download button
-                    gr.Button("Download Resume", elem_classes="download-btn")
-                    
-                    # Divider section
-                    with gr.Column(elem_classes="divider-section"):
-                        gr.Markdown("""<h4 class="divider-title">I Built This AI to Talk About My Resume</h4>""")
-                        gr.Markdown("""<a href="https://yourblog.com" target="_blank" class="blog-link">Link to my blog here - left aligned</a>""")
-                        gr.Markdown("""<p class="divider-text">This demo showcases a full-stack AI assistant I built from scratch to chat about my own resume. Powered by OpenAI’s GPT models and deployed with Kubernetes, ArgoCD, and GitOps, it answers questions about my experience and triggers tool-based actions like logging interest or unknown queries. It reflects my skills in prompt engineering, tool calling, PDF parsing, and secure, observable DevOps — demonstrating that I don’t just use AI, I engineer systems around it.</p>""")
-                        gr.Markdown("""<h4 class="divider-title">Start Chatting with My Resume</h4>""")
-                        gr.Markdown("""<p class="divider-text">Start typing to ask me anything about my work, projects, or experience — the assistant will respond in real time.</p>""")
+                    download_btn = gr.Button(
+                        config.PERSONAL["resume_button_text"], 
+                        elem_classes="download-btn"
+                    )
+                    file_download = gr.File(visible=False)
 
+                    with gr.Column(elem_classes="divider-section"):
+                        gr.Markdown(f"""<h4 class="divider-title">{ui_config["titles"]["assistant_title"]}</h4>""")
+                        gr.Markdown(f"""<a href="{config.PERSONAL["blog_url"]}" target="_blank" class="blog-link">{ui_config["titles"]["blog_link_text"]}</a>""")
+                        gr.Markdown(f"""<p class="divider-text">{ui_config["descriptions"]["assistant_description"]}</p>""")
+                        gr.Markdown(f"""<h4 class="divider-title">{ui_config["titles"]["start_chatting_title"]}</h4>""")
+                        gr.Markdown(f"""<p class="divider-text">{ui_config["chat"]["start_chatting_text"]}</p>""")
         # Right Chat Panel 
-        with gr.Column(scale=3, elem_classes="right-panel"):
+        with gr.Column(scale=2, elem_classes="right-panel"):
             chatbot = gr.Chatbot(
                 elem_classes="chat-container",
                 label=None,
@@ -377,7 +423,7 @@ with gr.Blocks(css=custom_css) as demo:
             
             with gr.Row(elem_classes="input-container"):
                 msg = gr.Textbox(
-                    placeholder="Chat with my resume — just type here a question about my work or experience...",
+                    placeholder=config.UI["chat"]["input_placeholder"],
                     elem_classes="chat-input",
                     show_label=False,
                     container=False
@@ -385,13 +431,43 @@ with gr.Blocks(css=custom_css) as demo:
             
             state = gr.State([])
             
-            # Load initial message
+            # Load initial message with typing effect
+            def load_initial_message():
+                initial_text = config.UI["chat"]["initial_message"]
+                for i in range(1, len(initial_text)+1):
+                    yield [(None, initial_text[:i])]
+                    time.sleep(0.02)
+                yield [(None, initial_text)]
+            
+            # Modified to preserve initial message
+            def respond(message, history):
+                history = history or []
+                
+                # Keep original user message
+                history.append((message, ""))
+                yield history, history
+                
+                # Show thinking indicator
+                history[-1] = (message, config.UI["chat"]["thinking_message"])
+                yield history, history
+                
+                # Get and display response
+                response = assistant.chat(message)
+                clean_response = clean_message(response)
+                
+                full_response = ""
+                for char in clean_response:
+                    full_response += char
+                    history[-1] = (message, full_response)
+                    yield history, history
+                    time.sleep(config.UI["chat"]["typing_delay"])
+            
             demo.load(
                 load_initial_message,
                 inputs=None,
                 outputs=[chatbot]
             ).then(
-                lambda: [(None, "Ask me anything about my work, projects, or experience — I will respond in real time.")],
+                lambda: [(None, config.UI["chat"]["initial_message"])],  # Keep initial message
                 outputs=[state]
             )
             
@@ -399,8 +475,10 @@ with gr.Blocks(css=custom_css) as demo:
                 respond,
                 inputs=[msg, state],
                 outputs=[chatbot, state]
-            ).then(lambda: "", None, msg)
-
-
+            ).then(
+                lambda: "",
+                None,
+                msg
+            )
 if __name__ == "__main__":
     demo.launch()
